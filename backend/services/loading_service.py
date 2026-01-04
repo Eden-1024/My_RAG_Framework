@@ -5,6 +5,9 @@ import logging
 import os
 from datetime import datetime
 import json
+from pdfminer.high_level import extract_pages
+from pdfminer.layout import LTTextContainer, LTChar, LAParams, LTRect, LTLine
+import re
 
 logger = logging.getLogger(__name__)
 """
@@ -53,6 +56,8 @@ class LoadingService:
                     chunking_strategy=chunking_strategy,
                     chunking_options=chunking_options
                 )
+            elif method == "pdfminer":
+                return self._load_with_pdfminer(file_path)
             else:
                 raise ValueError(f"Unsupported loading method: {method}")
         except Exception as e:
@@ -312,3 +317,146 @@ class LoadingService:
         except Exception as e:
             logger.error(f"Error saving document: {str(e)}")
             raise
+
+    def extract_pdf_tables(self, pdf_path):
+        """
+        从PDF中提取表格数据，返回制表符分隔的字符串
+        格式：\t 内容1 \t 内容2 \t ...
+        """
+        
+        # 存储所有页面的表格数据
+        all_tables_data = []
+        
+        # 提取页面布局信息
+        for page_layout in extract_pages(pdf_path):
+            page_tables = []
+            
+            # 收集页面中的所有文本元素和线框元素
+            text_elements = []
+            line_elements = []
+            
+            for element in page_layout:
+                if isinstance(element, LTTextContainer):
+                    # 获取文本的精确位置和内容
+                    text = element.get_text().strip()
+                    if text:  # 只处理非空文本
+                        x0, y0, x1, y1 = element.bbox
+                        text_elements.append({
+                            'text': text,
+                            'x0': x0,
+                            'y0': y0,
+                            'x1': x1,
+                            'y1': y1,
+                            'page_height': page_layout.height
+                        })
+                elif isinstance(element, LTRect) or isinstance(element, LTLine):
+                    # 收集表格线框
+                    x0, y0, x1, y1 = element.bbox
+                    line_elements.append({
+                        'type': 'rect' if isinstance(element, LTRect) else 'line',
+                        'x0': x0,
+                        'y0': y0,
+                        'x1': x1,
+                        'y1': y1
+                    })
+            
+            if not text_elements:
+                continue
+            
+            # 根据Y坐标对文本进行分组（行）
+            # 先将文本按Y坐标排序（从上到下）
+            text_elements.sort(key=lambda x: -x['y0'])  # 负号表示从上到下
+            
+            # 识别行：Y坐标相近的文本归为同一行
+            rows = []
+            current_row = []
+            row_y = None
+            row_threshold = 5  # Y坐标相差小于5像素的视为同一行
+            
+            for text in text_elements:
+                if row_y is None:
+                    row_y = text['y0']
+                    current_row.append(text)
+                elif abs(text['y0'] - row_y) < row_threshold:
+                    current_row.append(text)
+                else:
+                    # 当前行结束，开始新行
+                    if current_row:
+                        rows.append(current_row)
+                    current_row = [text]
+                    row_y = text['y0']
+            
+            if current_row:
+                rows.append(current_row)
+            
+            # 对每行内的文本按X坐标排序（从左到右）
+            for row in rows:
+                row.sort(key=lambda x: x['x0'])
+            
+            # 转换为表格格式
+            for row in rows:
+                row_data = []
+                for cell in row:
+                    # 清理文本：移除多余的空格和换行
+                    clean_text = re.sub(r'\s+', ' ', cell['text']).strip()
+                    if clean_text:
+                        row_data.append(clean_text)
+                
+                if row_data:  # 只处理非空行
+                    page_tables.append(row_data)
+            
+            if page_tables:
+                all_tables_data.extend(page_tables)
+        
+        # 将表格数据转换为所需格式的字符串
+        result_strings = []
+        for row in all_tables_data:
+            # 使用制表符分隔每个单元格，并在前后添加\t
+            row_str = "\t " + " \t ".join(row) + " \t"
+            result_strings.append(row_str)
+        
+        return result_strings
+
+    def _load_with_pdfminer(self, file_path: str) -> str:
+        
+        """
+        使用pdfminer库加载PDF文档。
+
+        参数:
+            file_path (str): PDF文件路径
+
+        返回:
+            str: 提取的文本内容
+        """
+        text_by_page = {}
+        text_blocks = []
+        # 遍历所有页面
+        for page_num, page_layout in enumerate(extract_pages(file_path)):
+            page_text = ""
+            # 遍历页面中的每个文本容器
+            for element in page_layout:
+                if isinstance(element, LTTextContainer):
+                    # 提取文本
+                    page_text += element.get_text()
+            text_blocks.append({
+                "text": page_text.strip(),
+                "page": page_num + 1,
+                "metadata": "text"
+            })
+
+        tables = self.extract_pdf_tables(file_path)
+
+        table_row = 0
+
+        for table in tables:
+            text_blocks.append({
+                "text": table.strip(),
+                "page": table_row + 1,
+                "metadata": "table"
+            })
+            table_row += 1
+
+        self.total_pages = page_num + 1
+        self.current_page_map.extend(text_blocks)
+        text_by_page = "\n".join(block["text"] for block in text_blocks)
+        return text_by_page

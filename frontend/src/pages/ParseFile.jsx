@@ -67,7 +67,7 @@ const ParseFile = () => {
               <label className="block text-sm font-medium mb-1">Upload PDF</label>
               <input
                 type="file"
-                accept=".pdf"
+                accept=".pdf,.md,.markdown"
                 onChange={handleFileSelect}
                 className="block w-full border rounded px-3 py-2"
                 required
@@ -85,6 +85,7 @@ const ParseFile = () => {
                 <option value="pypdf">PyPDF</option>
                 <option value="unstructured">Unstructured</option>
                 <option value="pdfplumber">PDF Plumber</option>
+                <option value="pdfminer">PDF Miner</option>
               </select>
             </div>
 

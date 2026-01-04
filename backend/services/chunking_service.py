@@ -1,167 +1,330 @@
 from datetime import datetime
 import logging
+from typing import List, Dict, Any, Optional, Literal
+from dataclasses import dataclass, asdict
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 logger = logging.getLogger(__name__)
 
-class ChunkingService:
-    """
-    文本分块服务，提供多种文本分块策略
+# ===================== 数据模型定义 =====================
+@dataclass
+class PageData:
+    """页面数据模型"""
+    page: int
+    text: str
+
+@dataclass
+class ChunkMetadata:
+    """分块元数据模型"""
+    chunk_id: int
+    page_number: int
+    page_range: str
+    word_count: int
+
+@dataclass
+class Chunk:
+    """分块数据模型"""
+    content: str
+    metadata: ChunkMetadata
+
+@dataclass
+class ChunkingResult:
+    """分块结果模型"""
+    filename: str
+    total_chunks: int
+    total_pages: int
+    loading_method: str
+    chunking_method: str
+    timestamp: str
+    chunks: List[Chunk]
+
+# ===================== 分块策略接口 =====================
+class ChunkingStrategy:
+    """分块策略基类"""
     
-    该服务支持以下分块方法：
-    - by_pages: 按页面分块，每页作为一个块
-    - fixed_size: 按固定大小分块
-    - by_paragraphs: 按段落分块
-    - by_sentences: 按句子分块
-    """
-    
-    def chunk_text(self, text: str, method: str, metadata: dict, page_map: list = None, chunk_size: int = 1000) -> dict:
+    def chunk_page(self, page_data: PageData, start_chunk_id: int) -> List[Chunk]:
         """
-        将文本按指定方法分块
+        分块单个页面
         
         Args:
-            text: 原始文本内容
-            method: 分块方法，支持 'by_pages', 'fixed_size', 'by_paragraphs', 'by_sentences'
-            metadata: 文档元数据
-            page_map: 页面映射列表，每个元素包含页码和页面文本
-            chunk_size: 固定大小分块时的块大小
+            page_data: 页面数据
+            start_chunk_id: 起始块ID
             
         Returns:
-            包含分块结果的文档数据结构
-        
-        Raises:
-            ValueError: 当分块方法不支持或页面映射为空时
+            分块列表
         """
-        try:
-            if not page_map:
-                raise ValueError("Page map is required for chunking.")
-            
-            chunks = []
-            total_pages = len(page_map)
-            
-            if method == "by_pages":
-                # 直接使用 page_map 中的每页作为一个 chunk
-                for page_data in page_map:
-                    chunk_metadata = {
-                        "chunk_id": len(chunks) + 1,
-                        "page_number": page_data['page'],
-                        "page_range": str(page_data['page']),
-                        "word_count": len(page_data['text'].split())
-                    }
-                    chunks.append({
-                        "content": page_data['text'],
-                        "metadata": chunk_metadata
-                    })
-            
-            elif method == "fixed_size":
-                # 对每页内容进行固定大小分块
-                for page_data in page_map:
-                    page_chunks = self._fixed_size_chunks(page_data['text'], chunk_size)
-                    for idx, chunk in enumerate(page_chunks, 1):
-                        chunk_metadata = {
-                            "chunk_id": len(chunks) + 1,
-                            "page_number": page_data['page'],
-                            "page_range": str(page_data['page']),
-                            "word_count": len(chunk["text"].split())
-                        }
-                        chunks.append({
-                            "content": chunk["text"],
-                            "metadata": chunk_metadata
-                        })
-            
-            elif method in ["by_paragraphs", "by_sentences"]:
-                # 对每页内容进行段落或句子分块
-                splitter_method = self._paragraph_chunks if method == "by_paragraphs" else self._sentence_chunks
-                for page_data in page_map:
-                    page_chunks = splitter_method(page_data['text'])
-                    for chunk in page_chunks:
-                        chunk_metadata = {
-                            "chunk_id": len(chunks) + 1,
-                            "page_number": page_data['page'],
-                            "page_range": str(page_data['page']),
-                            "word_count": len(chunk["text"].split())
-                        }
-                        chunks.append({
-                            "content": chunk["text"],
-                            "metadata": chunk_metadata
-                        })
-            else:
-                raise ValueError(f"Unsupported chunking method: {method}")
+        raise NotImplementedError
 
-            # 创建标准化的文档数据结构
-            document_data = {
-                "filename": metadata.get("filename", ""),
-                "total_chunks": len(chunks),
-                "total_pages": total_pages,
-                "loading_method": metadata.get("loading_method", ""),
-                "chunking_method": method,
-                "timestamp": datetime.now().isoformat(),
-                "chunks": chunks
-            }
-            
-            return document_data
-            
-        except Exception as e:
-            logger.error(f"Error in chunk_text: {str(e)}")
-            raise
-
-    def _fixed_size_chunks(self, text: str, chunk_size: int) -> list[dict]:
-        """
-        将文本按固定大小分块
-        
-        Args:
-            text: 要分块的文本
-            chunk_size: 每块的最大字符数
-            
-        Returns:
-            分块后的文本列表
-        """
+class PageChunkingStrategy(ChunkingStrategy):
+    """按页面分块策略"""
+    
+    def chunk_page(self, page_data: PageData, start_chunk_id: int) -> List[Chunk]:
         chunks = []
+        metadata = ChunkMetadata(
+            chunk_id=start_chunk_id,
+            page_number=page_data.page,
+            page_range=str(page_data.page),
+            word_count=len(page_data.text.split())
+        )
+        chunks.append(Chunk(content=page_data.text, metadata=metadata))
+        return chunks
+
+class FixedSizeChunkingStrategy(ChunkingStrategy):
+    """固定大小分块策略"""
+    
+    def __init__(self, chunk_size: int = 1000):
+        self.chunk_size = chunk_size
+    
+    def chunk_page(self, page_data: PageData, start_chunk_id: int) -> List[Chunk]:
+        chunks = []
+        page_chunks = self._create_fixed_size_chunks(page_data.text)
+        
+        for idx, chunk_text in enumerate(page_chunks, 1):
+            metadata = ChunkMetadata(
+                chunk_id=start_chunk_id + len(chunks),
+                page_number=page_data.page,
+                page_range=str(page_data.page),
+                word_count=len(chunk_text.split())
+            )
+            chunks.append(Chunk(content=chunk_text, metadata=metadata))
+        
+        return chunks
+    
+    def _create_fixed_size_chunks(self, text: str) -> List[str]:
+        """创建固定大小的文本块"""
         words = text.split()
+        chunks = []
         current_chunk = []
         current_length = 0
         
         for word in words:
             word_length = len(word) + (1 if current_length > 0 else 0)
-            if current_length + word_length > chunk_size and current_chunk:
-                chunks.append({"text": " ".join(current_chunk)})
+            
+            if current_length + word_length > self.chunk_size and current_chunk:
+                chunks.append(" ".join(current_chunk))
                 current_chunk = []
                 current_length = 0
+            
             current_chunk.append(word)
             current_length += word_length
-            
+        
         if current_chunk:
-            chunks.append({"text": " ".join(current_chunk)})
-            
+            chunks.append(" ".join(current_chunk))
+        
         return chunks
 
-    def _paragraph_chunks(self, text: str) -> list[dict]:
-        """
-        将文本按段落分块
+class ParagraphChunkingStrategy(ChunkingStrategy):
+    """按段落分块策略"""
+    
+    def chunk_page(self, page_data: PageData, start_chunk_id: int) -> List[Chunk]:
+        chunks = []
+        paragraphs = [p.strip() for p in page_data.text.split('\n\n') if p.strip()]
         
-        Args:
-            text: 要分块的文本
-            
-        Returns:
-            分块后的段落列表
-        """
-        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-        return [{"text": para} for para in paragraphs]
+        for para in paragraphs:
+            metadata = ChunkMetadata(
+                chunk_id=start_chunk_id + len(chunks),
+                page_number=page_data.page,
+                page_range=str(page_data.page),
+                word_count=len(para.split())
+            )
+            chunks.append(Chunk(content=para, metadata=metadata))
+        
+        return chunks
 
-    def _sentence_chunks(self, text: str) -> list[dict]:
-        """
-        将文本按句子分块
-        
-        Args:
-            text: 要分块的文本
-            
-        Returns:
-            分块后的句子列表
-        """
-        splitter = RecursiveCharacterTextSplitter(
+class SentenceChunkingStrategy(ChunkingStrategy):
+    """按句子分块策略"""
+    
+    def __init__(self):
+        self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             separators=[".", "!", "?", "\n", " "]
         )
-        texts = splitter.split_text(text)
-        return [{"text": t} for t in texts]
+    
+    def chunk_page(self, page_data: PageData, start_chunk_id: int) -> List[Chunk]:
+        chunks = []
+        sentences = self.splitter.split_text(page_data.text)
+        
+        for sentence in sentences:
+            metadata = ChunkMetadata(
+                chunk_id=start_chunk_id + len(chunks),
+                page_number=page_data.page,
+                page_range=str(page_data.page),
+                word_count=len(sentence.split())
+            )
+            chunks.append(Chunk(content=sentence, metadata=metadata))
+        
+        return chunks
+
+# ===================== 策略工厂 =====================
+class ChunkingStrategyFactory:
+    """分块策略工厂"""
+    
+    @staticmethod
+    def create_strategy(
+        method: Literal["by_pages", "fixed_size", "by_paragraphs", "by_sentences"],
+        **kwargs
+    ) -> ChunkingStrategy:
+        """创建分块策略实例"""
+        
+        strategies = {
+            "by_pages": PageChunkingStrategy,
+            "fixed_size": FixedSizeChunkingStrategy,
+            "by_paragraphs": ParagraphChunkingStrategy,
+            "by_sentences": SentenceChunkingStrategy,
+        }
+        
+        if method not in strategies:
+            raise ValueError(f"Unsupported chunking method: {method}")
+        
+        strategy_class = strategies[method]
+        return strategy_class(**kwargs) if kwargs else strategy_class()
+
+# ===================== 主服务类 =====================
+class ChunkingService:
+    """
+    文本分块服务，提供多种文本分块策略
+    """
+    
+    def __init__(self):
+        self.strategy_factory = ChunkingStrategyFactory()
+    
+    def chunk_text(
+        self,
+        text: str,
+        method: Literal["by_pages", "fixed_size", "by_paragraphs", "by_sentences"],
+        metadata: Dict[str, Any],
+        page_map: List[Dict[str, Any]],
+        chunk_size: int = 1000
+    ) -> Dict[str, Any]:
+        """
+        将文本按指定方法分块
+        
+        Args:
+            text: 原始文本内容
+            method: 分块方法
+            metadata: 文档元数据
+            page_map: 页面映射列表
+            chunk_size: 固定大小分块时的块大小
+            
+        Returns:
+            包含分块结果的文档数据结构
+        """
+        try:
+            # 验证输入
+            self._validate_input(page_map, method)
+            
+            # 转换页面数据为模型对象
+            page_data_list = [
+                PageData(page=item['page'], text=item['text'])
+                for item in page_map
+            ]
+            
+            # 获取分块策略
+            strategy_kwargs = {"chunk_size": chunk_size} if method == "fixed_size" else {}
+            strategy = self.strategy_factory.create_strategy(method, **strategy_kwargs)
+            
+            # 执行分块
+            chunks = self._execute_chunking(strategy, page_data_list)
+            
+            # 构建结果
+            result = self._build_result(chunks, metadata, method, page_data_list)
+            
+            logger.info(
+                f"Successfully chunked document '{metadata.get('filename', 'unknown')}' "
+                f"using method '{method}': {len(chunks)} chunks from {len(page_data_list)} pages"
+            )
+            
+            return asdict(result)
+            
+        except Exception as e:
+            logger.error(f"Error in chunk_text: {str(e)}", exc_info=True)
+            raise
+    
+    def _validate_input(self, page_map: List[Dict[str, Any]], method: str) -> None:
+        """验证输入参数"""
+        if not page_map:
+            raise ValueError("Page map cannot be empty")
+        
+        for item in page_map:
+            if 'page' not in item or 'text' not in item:
+                raise ValueError("Page map items must contain 'page' and 'text' keys")
+    
+    def _execute_chunking(
+        self,
+        strategy: ChunkingStrategy,
+        page_data_list: List[PageData]
+    ) -> List[Chunk]:
+        """执行分块操作"""
+        chunks = []
+        chunk_id_counter = 1
+        
+        for page_data in page_data_list:
+            page_chunks = strategy.chunk_page(page_data, chunk_id_counter)
+            chunks.extend(page_chunks)
+            chunk_id_counter += len(page_chunks)
+        
+        return chunks
+    
+    def _build_result(
+        self,
+        chunks: List[Chunk],
+        metadata: Dict[str, Any],
+        method: str,
+        page_data_list: List[PageData]
+    ) -> ChunkingResult:
+        """构建分块结果"""
+        return ChunkingResult(
+            filename=metadata.get("filename", "unknown"),
+            total_chunks=len(chunks),
+            total_pages=len(page_data_list),
+            loading_method=metadata.get("loading_method", "unknown"),
+            chunking_method=method,
+            timestamp=datetime.now().isoformat(),
+            chunks=chunks
+        )
+
+# ===================== 使用示例 =====================
+def example_usage():
+    """使用示例"""
+    # 创建服务实例
+    service = ChunkingService()
+    
+    # 准备数据
+    text = "这是一个示例文档内容..."
+    metadata = {
+        "filename": "example.pdf",
+        "loading_method": "pdf_loader"
+    }
+    page_map = [
+        {"page": 1, "text": "第一页的内容..."},
+        {"page": 2, "text": "第二页的内容..."},
+    ]
+    
+    try:
+        # 使用不同的分块方法
+        result_by_pages = service.chunk_text(
+            text=text,
+            method="by_pages",
+            metadata=metadata,
+            page_map=page_map
+        )
+        
+        result_fixed_size = service.chunk_text(
+            text=text,
+            method="fixed_size",
+            metadata=metadata,
+            page_map=page_map,
+            chunk_size=500
+        )
+        
+        print(f"按页面分块结果: {result_by_pages['total_chunks']} 个块")
+        print(f"固定大小分块结果: {result_fixed_size['total_chunks']} 个块")
+        
+    except Exception as e:
+        logger.error(f"示例执行失败: {e}")
+
+if __name__ == "__main__":
+    # 配置日志
+    logging.basicConfig(level=logging.INFO)
+    example_usage()

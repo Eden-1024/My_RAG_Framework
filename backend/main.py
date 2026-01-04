@@ -584,6 +584,17 @@ async def parse_file(
         
         # Clean up temp file
         os.remove(temp_path)
+
+         # 生成输出文件名
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        base_name = file.filename.replace('.pdf', '').replace('.md', '').replace('.markdown', '').split('_')[0]
+        output_filename = f"{base_name}_{loading_method}_{parsing_option}_{timestamp}.json"
+        
+        output_path = os.path.join("01-parsed-docs", output_filename)
+        os.makedirs("01-parsed-docs", exist_ok=True)
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump({"parsed_content": parsed_content}, f, ensure_ascii=False, indent=2)
         
         return {"parsed_content": parsed_content}
     except Exception as e:
@@ -634,7 +645,7 @@ async def load_file(
         metadata["total_pages"] = loading_service.get_total_pages()
         
         page_map = loading_service.get_page_map()
-        
+        print(f"Page map has {len(page_map)} pages.")   
         # 转换成标准化的chunks格式
         chunks = []
         for idx, page in enumerate(page_map, 1):
