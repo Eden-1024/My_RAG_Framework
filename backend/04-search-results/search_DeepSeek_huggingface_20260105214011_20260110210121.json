@@ -1,0 +1,21 @@
+{
+  "query": "We will consistently explore and iterate on the deep thinking ",
+  "collection_id": "DeepSeek_huggingface_20260105214011",
+  "timestamp": "2026-01-10T21:01:21.697386",
+  "results": [
+    {
+      "text": "• We will consistently explore and iterate on the deep thinking capabilities of our models, aiming to enhance their intelligence and problem-solving abilities by expanding their reasoning length and depth.\n\n• We will explore more comprehensive and multi-dimensional model evaluation methods to prevent the tendency towards optimizing a fixed set of benchmarks during research, which may create a misleading impression of the model capabilities and affect our foundational assessment.",
+      "score": 0.57527095079422,
+      "metadata": {
+        "source": "DeepSeek.pdf",
+        "page": "36",
+        "chunk": 314,
+        "total_chunks": 438,
+        "page_range": "36",
+        "embedding_provider": "huggingface",
+        "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+        "embedding_timestamp": "2026-01-05T21:39:19.389483"
+      }
+    }
+  ]
+}
