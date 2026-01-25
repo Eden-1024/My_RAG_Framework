@@ -1,0 +1,4 @@
+mcp==1.26.0
+pymilvus==2.4.9
+sentence-transformers
+numpy
